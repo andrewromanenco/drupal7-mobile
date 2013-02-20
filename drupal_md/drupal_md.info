@@ -1,0 +1,8 @@
+; Drupal on mobile devices
+; Visit drupal.md for details
+; Andrew Romanenco <andrew@romanenco.com>
+name = Drupal for mobile users
+description = Data access point for mobile clients
+package = Drupal.MD
+core = 7.x
+version = 1.1

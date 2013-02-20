@@ -1,0 +1,218 @@
+<?php
+
+/**
+ * @file
+ * Access for mobile clients.
+ * Restful requests with JSON replies.
+ *
+ * www.drupal.md
+ * andrew@romanenco.com
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function drupal_md_menu() {
+  $items['drupalmd/info'] = array(
+    'title' => 'Services',
+    'description' => 'Available services',
+    'page callback' => 'drupal_md_info',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['drupalmd/auth'] = array(
+    'title' => 'Authentication',
+    'description' => 'Open mobile client session',
+    'page callback' => 'drupal_md_auth',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+  );
+
+  $items['drupalmd/logout'] = array(
+    'title' => 'Logout',
+    'description' => 'Close mobile client session',
+    'page callback' => 'drupal_md_logout',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+  );
+
+  //Services
+  $items['drupalmd/online'] = array(
+    'title' => 'Online users',
+    'description' => 'Online users',
+    'page callback' => 'drupal_md_online',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+    'drupal_md_version' => '1.1',
+    'file' => 'drupal_md.online.inc',
+  );
+
+  $items['drupalmd/log'] = array(
+    'title' => 'Log',
+    'description' => 'Recent log events',
+    'page callback' => 'drupal_md_log',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+    'drupal_md_version' => '1.1',
+    'file' => 'drupal_md.log.inc',
+  );
+
+  $items['drupalmd/status'] = array(
+    'title' => 'Status',
+    'description' => 'Site status',
+    'page callback' => 'drupal_md_status',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+    'drupal_md_version' => '1.1',
+    'file' => 'drupal_md.status.inc',
+  );
+
+  $items['drupalmd/updates'] = array(
+    'title' => 'Updates',
+    'description' => 'Available site updates',
+    'page callback' => 'drupal_md_updates',
+    'access callback' => true,
+    'type' => MENU_CALLBACK,
+    'drupal_md_version' => '1.1',
+    'file' => 'drupal_md.updates.inc',
+  );
+
+  return $items;
+}
+
+function drupal_md_permission() {
+  return array(
+    'view online users on mobile' =>  array(
+      'title' => t('View online users'),
+    ),
+    'view log on mobile' =>  array(
+      'title' => t('View latest log messages'),
+    ),
+    'view status on mobile' =>  array(
+      'title' => t('View site status'),
+    ),
+    'view drupal updates on mobile' =>  array(
+      'title' => t('View site updates'),
+    ),
+  );
+}
+
+/**
+ * Implementation for services info
+ */
+function drupal_md_info() {
+  $path = drupal_get_path('module', 'drupal_md').'/drupal_md.info';
+  $info = drupal_parse_info_file($path);
+  $items = drupal_md_menu();
+  $output = array();
+  foreach ($items as $path => $item) {
+    $paths = explode("/", $path);
+    if (($paths[1] == 'info')
+      ||($paths[1] == 'auth')
+      ||($paths[1] == 'logout')) continue;
+    $output[$paths[1]] = $item['drupal_md_version'];
+  }
+  drupal_json_output(array(
+    'name' => $info['name'],
+    'version' => $info['version'],
+    'services' => $output,
+    'message' => 'ok')
+    );
+  exit;
+}
+
+
+/**
+ * Implementation for authentication.
+ * Requires: username, password (plaintext)
+ * Returns: token
+ * Fail: 401
+ */
+function drupal_md_auth() {
+  $data = $_REQUEST;
+  if (isset($data['username']) && isset($data['password'])) {
+    $user_id = user_authenticate($data['username'], $data['password']);
+    if ($user_id) {
+      global $user;
+      $account = user_load($user_id);
+      if ($account->status == 1) {
+        drupal_session_start();
+        $user = $account;
+        drupal_save_session();
+        drupal_json_output(array('message' => 'ok', 'token' => session_id()));
+        exit;
+      }
+    }
+  }
+  drupal_md_unauthorized();
+}
+
+/**
+ * Implementation for authentication/logout.
+ * Requires: token
+ * Returns: 200 ok
+ * Error: 401
+ */
+function drupal_md_logout() {
+  $account = drupal_md_get_user_by_session();
+  db_delete('sessions')
+    ->condition('sid', $_REQUEST['token'], '=')
+    ->execute();
+  drupal_json_output(array('message' => 'ok'));
+  exit;
+}
+
+function drupal_md_get_user_by_session($permission = '') {
+  if (isset($_REQUEST['token'])) {
+    $session = $_REQUEST['token'];
+  } else {
+    drupal_md_unauthorized();
+  }
+  $result = db_select('sessions', 's')
+    ->fields('s', array("uid"))
+    ->condition('sid', $session, '=')
+    ->execute()
+    ->fetchAssoc();
+  if (isset($result['uid'])) {
+    $account = user_load($result['uid']);
+    if ($account->status != 1) {
+      drupal_md_forbidden();
+    }
+    db_update('sessions') // Table name no longer needs {}
+      ->fields(array(
+        'timestamp' => time(),
+        'hostname' =>  ip_address(),
+        ))
+      ->condition('sid', $session, '=')
+      ->execute();
+    
+    if ($permission != '') {
+      if (!user_access($permission, $account)) {
+        drupal_md_forbidden();
+      }
+    }
+    
+    return $account;
+  } else {
+    drupal_md_unauthorized();
+  }
+}
+
+function drupal_md_unauthorized() {
+  header(':', true, 401);
+  drupal_json_output(array('message' => 'unauthorized'));
+  exit;
+}
+
+function drupal_md_forbidden() {
+  header(':', true, 403);
+  drupal_json_output(array('message' => 'forbidden'));
+  exit;
+}
+
+function drupal_md_not_found() {
+  header(':', true, 404);
+  drupal_json_output(array('message' => 'not found'));
+  exit;
+}
